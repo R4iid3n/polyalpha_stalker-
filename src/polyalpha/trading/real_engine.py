@@ -31,6 +31,7 @@ from ..core import (
     TransactionRebroadcastError,
     PRICE_STALENESS_THRESHOLD,
     FALLBACK_PRICE,
+    MAX_ORDER_PRICE,
     FEE_ROUNDING,
     calculate_polymarket_fee,
     fee_rate_for_category,
@@ -890,6 +891,10 @@ class RealTradingEngine:
         # 5. Get price with stream awareness (prefers live stream price if available)
         if price is None:
             price, price_source = self._get_price_for_side(market, side)
+            # Market orders cross the spread. Buffer the price by the configured
+            # slippage tolerance so the marketable limit actually fills, and record
+            # the buffered (worst-case) price so cost is never underestimated.
+            price = self._apply_buy_slippage(price, config)
 
         # 6. Calculate shares and fee
         is_maker = user_provided_price  # limit orders provide liquidity
@@ -2782,6 +2787,40 @@ class RealTradingEngine:
             market=market,
             positions=self._positions,
         )
+
+    def _apply_buy_slippage(self, price: float, config) -> float:
+        """
+        Buffer a market-buy price by the configured slippage tolerance.
+
+        A market buy has to cross the spread; submitting at the exact quoted price
+        leaves the signed order non-marketable, so it may never fill. We raise the
+        price by ``slippage_tolerance`` (a buy is always adverse in the up direction)
+        and cap it just below 1.0, since Polymarket prices live in (0, 1). The
+        buffered price is used for both submission and accounting, so recorded cost
+        is the worst case and never underestimated.
+
+        Parameters
+        ----------
+        price : float
+            Quoted price per share.
+        config : RealTradingConfig
+            Resolved config providing ``slippage_tolerance``.
+
+        Returns
+        -------
+        float
+            Slippage-adjusted price, capped at ``MAX_ORDER_PRICE``.
+        """
+        tolerance = getattr(config, "slippage_tolerance", 0.0)
+        if tolerance <= 0 or price <= 0:
+            return price
+        adjusted = min(price * (1 + tolerance), MAX_ORDER_PRICE)
+        if adjusted != price:
+            log.debug(
+                "Real: applied %.2f%% buy slippage: %.4f -> %.4f",
+                tolerance * 100, price, adjusted,
+            )
+        return adjusted
 
     def _calculate_shares_and_fee(self, amount: float, price: float, is_maker: bool = False) -> tuple[float, float]:
         """

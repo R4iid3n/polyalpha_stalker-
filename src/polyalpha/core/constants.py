@@ -156,6 +156,7 @@ MARKET_CANDIDATE_COUNT = 3  # Number of candidate windows to probe
 DEFAULT_PRICE_THRESHOLD = 0.0  # Minimum price change to emit event (0 = any change)
 FALLBACK_PRICE = 0.5  # Fallback price when market price is unavailable
 PRICE_STALENESS_THRESHOLD = 30  # Seconds before market price is considered stale
+MAX_ORDER_PRICE = 0.999  # Cap for slippage-adjusted buy price (Polymarket prices live in (0,1))
 
 # ── Fee Configuration ───────────────────────────────────────────────────────────
 

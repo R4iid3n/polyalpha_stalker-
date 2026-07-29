@@ -125,6 +125,53 @@ def test_real_engine_buy_with_limit(engine, make_market):
     assert order.is_limit == True
 
 
+# ── Buy slippage (item 68: buy at correct price incl. slippage) ─────────────────
+# Exercise the pure helpers directly (unbound, dummy self) so they run offline —
+# the RealTradingEngine fixture requires network, unlike these.
+
+from types import SimpleNamespace
+
+
+@pytest.mark.unit
+def test_apply_buy_slippage_buffers_quote():
+    """Market-buy price is buffered upward by slippage_tolerance (worst-case)."""
+    cfg = SimpleNamespace(slippage_tolerance=0.05)
+    # 0.55 * (1 + 0.05) = 0.5775
+    assert RealTradingEngine._apply_buy_slippage(None, 0.55, cfg) == pytest.approx(0.5775)
+
+
+@pytest.mark.unit
+def test_apply_buy_slippage_capped_below_one():
+    """Slippage-adjusted price is capped at MAX_ORDER_PRICE (< 1.0)."""
+    from polyalpha.core.constants import MAX_ORDER_PRICE
+    cfg = SimpleNamespace(slippage_tolerance=0.10)  # 0.98 * 1.10 = 1.078 -> capped
+    assert RealTradingEngine._apply_buy_slippage(None, 0.98, cfg) == pytest.approx(MAX_ORDER_PRICE)
+
+
+@pytest.mark.unit
+def test_apply_buy_slippage_zero_tolerance_unchanged():
+    """slippage_tolerance=0 leaves the quoted price untouched."""
+    cfg = SimpleNamespace(slippage_tolerance=0.0)
+    assert RealTradingEngine._apply_buy_slippage(None, 0.55, cfg) == pytest.approx(0.55)
+
+
+@pytest.mark.unit
+def test_apply_buy_slippage_shares_consistent():
+    """Shares are computed from the buffered price so cost is not underestimated."""
+    cfg = SimpleNamespace(slippage_tolerance=0.05)
+    buffered = RealTradingEngine._apply_buy_slippage(None, 0.55, cfg)
+
+    fake_self = SimpleNamespace(
+        _config=SimpleNamespace(fee_mode="zero"),
+        _calculate_fee=lambda *a, **k: 0.0,
+    )
+    shares, fee = RealTradingEngine._calculate_shares_and_fee(fake_self, 10.0, buffered)
+    raw_shares, _ = RealTradingEngine._calculate_shares_and_fee(fake_self, 10.0, 0.55)
+    # Buffered price -> fewer shares than the raw quote, and internally consistent
+    assert shares < raw_shares
+    assert shares == pytest.approx((10.0 - fee) / buffered)
+
+
 @pytest.mark.requires_network
 @pytest.mark.unit
 def test_real_engine_insufficient_allowance(make_market):
